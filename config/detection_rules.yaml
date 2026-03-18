@@ -14,6 +14,11 @@ detectors:
   seasonal:
     enabled: true
     deviation_threshold: 2.5
+    # Mode for seasonal baseline grouping:
+    #   "day_of_week" — buckets by (hour, day-of-week) to capture weekly patterns
+    #   "time_of_day" — buckets by hour only, ignoring day-of-week
+    #                    (useful for services with consistent daily patterns)
+    seasonal_mode: day_of_week
 
   error_rate:
     enabled: true

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from src.detectors.seasonal_detector import SeasonalDetector
+from src.detectors.seasonal_detector import SeasonalDetector, SeasonalMode
 from src.detectors.zscore_detector import ZScoreDetector
 from src.models.anomaly import AnomalyEvent
 from src.models.transaction import TransactionVolume, VolumeBaseline, VolumeTimeSeries
@@ -22,6 +22,7 @@ class AnomalyDetectionAgent:
         zscore_warning: float = 2.0,
         zscore_critical: float = 3.0,
         seasonal_threshold: float = 2.5,
+        seasonal_mode: SeasonalMode = "day_of_week",
     ) -> None:
         self.zscore_detector = ZScoreDetector(
             warning_threshold=zscore_warning,
@@ -29,7 +30,9 @@ class AnomalyDetectionAgent:
         )
         self.seasonal_detector = SeasonalDetector(
             deviation_threshold=seasonal_threshold,
+            seasonal_mode=seasonal_mode,
         )
+        self.seasonal_mode: SeasonalMode = seasonal_mode
         self.baselines: dict[str, list[VolumeBaseline]] = {}
         self.detected_anomalies: list[AnomalyEvent] = []
 
@@ -97,10 +100,16 @@ class AnomalyDetectionAgent:
         # Z-score detection against matching baseline
         hour = observation.timestamp.hour
         dow = observation.timestamp.weekday()
-        matching_baseline = next(
-            (b for b in baselines if b.hour_of_day == hour and b.day_of_week == dow),
-            None,
-        )
+        if self.seasonal_mode == "day_of_week":
+            matching_baseline = next(
+                (b for b in baselines if b.hour_of_day == hour and b.day_of_week == dow),
+                None,
+            )
+        else:
+            matching_baseline = next(
+                (b for b in baselines if b.hour_of_day == hour and b.day_of_week is None),
+                None,
+            )
         if matching_baseline:
             zscore_anomaly = self.zscore_detector.detect(observation, matching_baseline)
             if zscore_anomaly:

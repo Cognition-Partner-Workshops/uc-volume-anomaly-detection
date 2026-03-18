@@ -29,11 +29,11 @@ class VolumeBaseline:
     service_name: str
     endpoint: str
     hour_of_day: int
-    day_of_week: int
     mean_count: float
     std_count: float
     mean_latency_ms: float
     std_latency_ms: float
+    day_of_week: Optional[int] = None
     sample_size: int = 0
 
     @property
