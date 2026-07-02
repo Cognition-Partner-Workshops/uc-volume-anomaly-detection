@@ -77,6 +77,14 @@ class RateOfChangeDetector:
             return None
 
         mean_rate = sum(rates) / len(rates)
+        if len(rates) < 2:
+            return RateOfChangeBaseline(
+                service_name=time_series.service_name,
+                endpoint=time_series.endpoint,
+                mean_rate=mean_rate,
+                std_rate=0.0,
+                sample_size=len(rates),
+            )
         variance = sum((r - mean_rate) ** 2 for r in rates) / (len(rates) - 1)
         std_rate = math.sqrt(variance)
 

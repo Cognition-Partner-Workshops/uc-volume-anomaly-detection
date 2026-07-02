@@ -101,35 +101,31 @@ class AnomalyDetectionAgent:
         key = f"{observation.service_name}/{observation.endpoint}"
         anomalies: list[AnomalyEvent] = []
 
+        # Seasonal and z-score detection (requires seasonal baselines)
         baselines = self.baselines.get(key, [])
-        if not baselines:
-            logger.debug("No baselines for %s, skipping", key)
-            return anomalies
+        if baselines:
+            seasonal_anomaly = self.seasonal_detector.detect(observation, baselines)
+            if seasonal_anomaly:
+                anomalies.append(seasonal_anomaly)
 
-        # Seasonal detection
-        seasonal_anomaly = self.seasonal_detector.detect(observation, baselines)
-        if seasonal_anomaly:
-            anomalies.append(seasonal_anomaly)
-
-        # Z-score detection against matching baseline
-        hour = observation.timestamp.hour
-        dow = observation.timestamp.weekday()
-        matching_baseline = next(
-            (b for b in baselines if b.hour_of_day == hour and b.day_of_week == dow),
-            None,
-        )
-        if matching_baseline:
-            zscore_anomaly = self.zscore_detector.detect(observation, matching_baseline)
-            if zscore_anomaly:
-                anomalies.append(zscore_anomaly)
-
-            latency_anomaly = self.zscore_detector.detect_latency(
-                observation, matching_baseline
+            hour = observation.timestamp.hour
+            dow = observation.timestamp.weekday()
+            matching_baseline = next(
+                (b for b in baselines if b.hour_of_day == hour and b.day_of_week == dow),
+                None,
             )
-            if latency_anomaly:
-                anomalies.append(latency_anomaly)
+            if matching_baseline:
+                zscore_anomaly = self.zscore_detector.detect(observation, matching_baseline)
+                if zscore_anomaly:
+                    anomalies.append(zscore_anomaly)
 
-        # Rate-of-change detection
+                latency_anomaly = self.zscore_detector.detect_latency(
+                    observation, matching_baseline
+                )
+                if latency_anomaly:
+                    anomalies.append(latency_anomaly)
+
+        # Rate-of-change detection (independent of seasonal baselines)
         roc_baseline = self.roc_baselines.get(key)
         previous = self.previous_observations.get(key)
         if roc_baseline and previous:

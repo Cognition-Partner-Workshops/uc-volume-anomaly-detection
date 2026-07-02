@@ -67,10 +67,12 @@ class CorrelationEngine:
         service_map: ServiceMap,
         correlation_window: timedelta = timedelta(minutes=30),
         min_confidence: float = 0.4,
+        max_history_per_service: int = 1000,
     ) -> None:
         self.service_map = service_map
         self.correlation_window = correlation_window
         self.min_confidence = min_confidence
+        self._max_history = max_history_per_service
         self._anomaly_history: dict[str, list[AnomalyEvent]] = {}
         self._volume_history: dict[str, list[TransactionVolume]] = {}
 
@@ -80,6 +82,8 @@ class CorrelationEngine:
         if key not in self._anomaly_history:
             self._anomaly_history[key] = []
         self._anomaly_history[key].append(anomaly)
+        if len(self._anomaly_history[key]) > self._max_history:
+            self._anomaly_history[key] = self._anomaly_history[key][-self._max_history:]
 
     def register_volume(self, observation: TransactionVolume) -> None:
         """Register a volume observation for detecting upstream changes."""
@@ -87,6 +91,8 @@ class CorrelationEngine:
         if key not in self._volume_history:
             self._volume_history[key] = []
         self._volume_history[key].append(observation)
+        if len(self._volume_history[key]) > self._max_history:
+            self._volume_history[key] = self._volume_history[key][-self._max_history:]
 
     def correlate(
         self,
@@ -282,8 +288,8 @@ class CorrelationEngine:
         delta = later - earlier
         return delta.total_seconds()
 
-    @staticmethod
     def _compute_confidence(
+        self,
         time_offset_seconds: float,
         severity: AnomalySeverity,
         direction: str,
@@ -293,7 +299,7 @@ class CorrelationEngine:
         Closer in time and higher severity yield higher confidence.
         """
         # Time decay: confidence drops as events are further apart
-        max_window = 1800.0  # 30 minutes in seconds
+        max_window = self.correlation_window.total_seconds()
         time_factor = max(0.0, 1.0 - (time_offset_seconds / max_window))
 
         # Severity boost
