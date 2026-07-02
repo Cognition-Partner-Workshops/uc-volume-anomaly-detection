@@ -4,10 +4,9 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from src.models.anomaly import AnomalyEvent, AnomalySeverity
+from src.models.anomaly import AnomalyEvent
 from src.models.service_health import (
     HealthStatus,
-    ServiceDependency,
     ServiceHealthSnapshot,
     ServiceMap,
 )

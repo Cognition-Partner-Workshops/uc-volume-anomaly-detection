@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 
 class AnomalySeverity(Enum):
@@ -19,6 +18,7 @@ class AnomalyType(Enum):
     LATENCY_SPIKE = "latency_spike"
     ERROR_RATE_SPIKE = "error_rate_spike"
     PATTERN_SHIFT = "pattern_shift"
+    RATE_OF_CHANGE = "rate_of_change"
 
 
 @dataclass

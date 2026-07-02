@@ -1,7 +1,6 @@
 """Z-score based anomaly detection for transaction volumes."""
 
 import logging
-import math
 from datetime import datetime
 from typing import Optional
 from uuid import uuid4
