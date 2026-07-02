@@ -1,7 +1,7 @@
 """Knowledge-Based Recommendation Agent — suggests corrective actions from prior incidents."""
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from src.models.anomaly import AnomalyEvent, AnomalySeverity, AnomalyType
