@@ -1,7 +1,8 @@
 """Tests for anomaly detection algorithms."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from src.detectors.ewma_detector import EWMADetector
 from src.detectors.zscore_detector import ZScoreDetector
 from src.detectors.seasonal_detector import SeasonalDetector, _mean, _std
 from src.models.anomaly import AnomalySeverity, AnomalyType
@@ -121,6 +122,113 @@ class TestSeasonalDetector:
         assert len(baselines) == 1
         assert baselines[0].hour_of_day == 10
         assert baselines[0].day_of_week == 0  # Monday
+
+
+class TestEWMADetector:
+    WARM_UP_COUNTS = [100, 104, 96, 102, 98, 101, 99, 103, 97, 100]
+
+    def _make_detector(self) -> EWMADetector:
+        return EWMADetector(
+            alpha=0.3,
+            warning_threshold=2.0,
+            critical_threshold=3.0,
+            min_observations=5,
+        )
+
+    def _observation(self, count: int, index: int) -> TransactionVolume:
+        return TransactionVolume(
+            timestamp=datetime(2026, 3, 10, 0, 0) + timedelta(hours=index),
+            service_name="payment-service",
+            endpoint="/api/v1/payments",
+            count=count,
+        )
+
+    def _warm_up(self, detector: EWMADetector) -> int:
+        for index, count in enumerate(self.WARM_UP_COUNTS):
+            assert detector.detect(self._observation(count, index)) is None
+        return len(self.WARM_UP_COUNTS)
+
+    def test_no_anomaly_within_threshold(self):
+        detector = self._make_detector()
+        index = self._warm_up(detector)
+        assert detector.detect(self._observation(101, index)) is None
+
+    def test_detects_volume_spike(self):
+        detector = self._make_detector()
+        index = self._warm_up(detector)
+        result = detector.detect(self._observation(300, index))
+        assert result is not None
+        assert result.anomaly_type == AnomalyType.VOLUME_SPIKE
+        assert result.observed_value == 300.0
+        assert result.expected_value < 110.0
+        assert result.deviation_score > 3.0
+
+    def test_detects_volume_drop(self):
+        detector = self._make_detector()
+        index = self._warm_up(detector)
+        result = detector.detect(self._observation(10, index))
+        assert result is not None
+        assert result.anomaly_type == AnomalyType.VOLUME_DROP
+        assert result.deviation_score > 3.0
+
+    def test_severity_classification(self):
+        # ~2.1σ above the EWMA -> MEDIUM
+        medium = self._make_detector()
+        index = self._warm_up(medium)
+        medium_result = medium.detect(self._observation(105, index))
+        assert medium_result is not None
+        assert medium_result.severity == AnomalySeverity.MEDIUM
+
+        # ~4.1σ above the EWMA -> HIGH
+        high = self._make_detector()
+        index = self._warm_up(high)
+        high_result = high.detect(self._observation(110, index))
+        assert high_result is not None
+        assert high_result.severity == AnomalySeverity.HIGH
+
+        # far outside the EWMA -> CRITICAL
+        critical = self._make_detector()
+        index = self._warm_up(critical)
+        critical_result = critical.detect(self._observation(200, index))
+        assert critical_result is not None
+        assert critical_result.severity == AnomalySeverity.CRITICAL
+
+    def test_first_observation_and_warm_up_are_silent(self):
+        detector = self._make_detector()
+        assert detector.detect(self._observation(100, 0)) is None
+        for index, count in enumerate([104, 96, 5000], start=1):
+            assert detector.detect(self._observation(count, index)) is None
+
+    def test_order_dependence(self):
+        # The same spike is only flagged once the EWMA has warmed up, so the
+        # ordering of observations changes the outcome.
+        early = self._make_detector()
+        assert early.detect(self._observation(100, 0)) is None
+        assert early.detect(self._observation(500, 1)) is None
+
+        late = self._make_detector()
+        index = self._warm_up(late)
+        assert late.detect(self._observation(500, index)) is not None
+
+    def test_sustained_shift_stops_alerting(self):
+        detector = self._make_detector()
+        index = self._warm_up(detector)
+        assert detector.detect(self._observation(300, index)) is not None
+        for offset in range(1, 15):
+            detector.detect(self._observation(300, index + offset))
+        assert detector.detect(self._observation(300, index + 15)) is None
+
+    def test_state_is_per_service_endpoint(self):
+        detector = self._make_detector()
+        self._warm_up(detector)
+        other = TransactionVolume(
+            timestamp=datetime(2026, 3, 10, 12, 0),
+            service_name="order-service",
+            endpoint="/api/v1/orders",
+            count=5000,
+        )
+        assert detector.detect(other) is None
+        assert len(detector.states) == 2
 
 
 class TestStatHelpers:
