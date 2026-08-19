@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from src.detectors.ewma_detector import EWMADetector
 from src.detectors.seasonal_detector import SeasonalDetector
 from src.detectors.zscore_detector import ZScoreDetector
 from src.models.anomaly import AnomalyEvent
@@ -22,6 +23,10 @@ class AnomalyDetectionAgent:
         zscore_warning: float = 2.0,
         zscore_critical: float = 3.0,
         seasonal_threshold: float = 2.5,
+        ewma_alpha: float = 0.3,
+        ewma_warning: float = 2.0,
+        ewma_critical: float = 3.0,
+        ewma_enabled: bool = True,
     ) -> None:
         self.zscore_detector = ZScoreDetector(
             warning_threshold=zscore_warning,
@@ -30,6 +35,12 @@ class AnomalyDetectionAgent:
         self.seasonal_detector = SeasonalDetector(
             deviation_threshold=seasonal_threshold,
         )
+        self.ewma_detector = EWMADetector(
+            alpha=ewma_alpha,
+            warning_threshold=ewma_warning,
+            critical_threshold=ewma_critical,
+        )
+        self.ewma_enabled = ewma_enabled
         self.baselines: dict[str, list[VolumeBaseline]] = {}
         self.detected_anomalies: list[AnomalyEvent] = []
 
@@ -86,31 +97,63 @@ class AnomalyDetectionAgent:
 
         baselines = self.baselines.get(key, [])
         if not baselines:
-            logger.debug("No baselines for %s, skipping", key)
-            return anomalies
+            logger.debug("No baselines for %s, running EWMA only", key)
+        else:
+            # Seasonal detection
+            seasonal_anomaly = self.seasonal_detector.detect(observation, baselines)
+            if seasonal_anomaly:
+                anomalies.append(seasonal_anomaly)
 
-        # Seasonal detection
-        seasonal_anomaly = self.seasonal_detector.detect(observation, baselines)
-        if seasonal_anomaly:
-            anomalies.append(seasonal_anomaly)
-
-        # Z-score detection against matching baseline
-        hour = observation.timestamp.hour
-        dow = observation.timestamp.weekday()
-        matching_baseline = next(
-            (b for b in baselines if b.hour_of_day == hour and b.day_of_week == dow),
-            None,
-        )
-        if matching_baseline:
-            zscore_anomaly = self.zscore_detector.detect(observation, matching_baseline)
-            if zscore_anomaly:
-                anomalies.append(zscore_anomaly)
-
-            latency_anomaly = self.zscore_detector.detect_latency(
-                observation, matching_baseline
+            # Z-score detection against matching baseline
+            hour = observation.timestamp.hour
+            dow = observation.timestamp.weekday()
+            matching_baseline = next(
+                (
+                    b
+                    for b in baselines
+                    if b.hour_of_day == hour and b.day_of_week == dow
+                ),
+                None,
             )
-            if latency_anomaly:
-                anomalies.append(latency_anomaly)
+            if matching_baseline:
+                zscore_anomaly = self.zscore_detector.detect(
+                    observation, matching_baseline
+                )
+                if zscore_anomaly:
+                    anomalies.append(zscore_anomaly)
 
+                latency_anomaly = self.zscore_detector.detect_latency(
+                    observation, matching_baseline
+                )
+                if latency_anomaly:
+                    anomalies.append(latency_anomaly)
+
+        # EWMA detection runs independently of baseline availability
+        if self.ewma_enabled:
+            ewma_anomaly = self.ewma_detector.detect(observation)
+            if ewma_anomaly:
+                anomalies.append(ewma_anomaly)
+
+        anomalies = self._deduplicate(anomalies)
         self.detected_anomalies.extend(anomalies)
         return anomalies
+
+    @staticmethod
+    def _deduplicate(anomalies: list[AnomalyEvent]) -> list[AnomalyEvent]:
+        """Keep the strongest signal per anomaly type and service endpoint.
+
+        Detectors overlap — the same volume spike is often reported by the
+        seasonal, z-score and EWMA detectors — so collapse them to avoid
+        inflating counts in the downstream report.
+        """
+        strongest: dict[tuple, AnomalyEvent] = {}
+        for anomaly in anomalies:
+            dedup_key = (
+                anomaly.anomaly_type,
+                anomaly.service_name,
+                anomaly.endpoint,
+            )
+            existing = strongest.get(dedup_key)
+            if existing is None or anomaly.deviation_score > existing.deviation_score:
+                strongest[dedup_key] = anomaly
+        return list(strongest.values())
